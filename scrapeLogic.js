@@ -14,35 +14,47 @@ const scrapeLogic = async (res) => {
         ? process.env.PUPPETEER_EXECUTABLE_PATH
         : puppeteer.executablePath(),
   });
+
   try {
     const page = await browser.newPage();
+    await page.setViewport({ width: 1920, height: 1080 });
 
-    await page.goto("https://developer.chrome.com/");
+    // Navigate to the Katalon demo site
+    await page.goto('https://cms.demo.katalon.com/', { waitUntil: 'networkidle0' });
 
-    // Set screen size
-    await page.setViewport({ width: 1080, height: 1024 });
+    // Click "Add to cart" for the first 4 items
+    for (let i = 1; i <= 4; i++) {
+      const addToCartSelector = `main#main > div:nth-child(2) > ul > li:nth-child(${i}) > div > a.button`;
+      await page.waitForSelector(addToCartSelector);
+      await page.click(addToCartSelector);
+    }
 
-    // Type into search box
-    await page.type(".search-box__input", "automate beyond recorder");
+    // Go to checkout page
+    await page.goto('https://cms.demo.katalon.com/checkout', { waitUntil: 'networkidle0' });
 
-    // Wait and click on first result
-    const searchResultSelector = ".search-box__link";
-    await page.waitForSelector(searchResultSelector);
-    await page.click(searchResultSelector);
+    // Get all items from the order review table
+    const items = await page.evaluate(() => {
+      const rows = document.querySelectorAll('#order_review table tbody tr');
+      return Array.from(rows).map(row => ({
+        name: row.querySelector('td.product-name').textContent.trim(),
+        price: row.querySelector('td.product-total').textContent.trim()
+      }));
+    });
 
-    // Locate the full title with a unique string
-    const textSelector = await page.waitForSelector(
-      "text/Customize and automate"
-    );
-    const fullTitle = await textSelector.evaluate((el) => el.textContent);
+    // Send response as JSON
+    res.json({
+      success: true,
+      data: items,
+      timestamp: new Date().toISOString()
+    });
 
-    // Print the full title
-    const logStatement = `The title of this blog post is ${fullTitle}`;
-    console.log(logStatement);
-    res.send(logStatement);
   } catch (e) {
     console.error(e);
-    res.send(`Something went wrong while running Puppeteer: ${e}`);
+    res.json({
+      success: false,
+      error: e.message,
+      timestamp: new Date().toISOString()
+    });
   } finally {
     await browser.close();
   }
