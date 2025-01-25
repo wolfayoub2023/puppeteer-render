@@ -2,61 +2,89 @@ const puppeteer = require("puppeteer");
 require("dotenv").config();
 
 const scrapeLogic = async (res) => {
-  const browser = await puppeteer.launch({
-    args: [
-      "--disable-setuid-sandbox",
-      "--no-sandbox",
-      "--single-process",
-      "--no-zygote",
-    ],
-    executablePath:
-      process.env.NODE_ENV === "production"
-        ? process.env.PUPPETEER_EXECUTABLE_PATH
-        : puppeteer.executablePath(),
-  });
+  let browser = null;
+
+  const loadPage = async () => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1920, height: 1080 });
+
+        console.log("Navigating to site...");
+        await Promise.all([
+          page.goto('https://cms.demo.katalon.com/', {
+            waitUntil: ['domcontentloaded', 'networkidle2'],
+            timeout: 60000
+          }),
+          new Promise(async (resolveNavigation) => {
+            page.once('load', async () => {
+              console.log("Page loaded");
+              resolveNavigation();
+            });
+          })
+        ]);
+
+        console.log("Waiting for products...");
+        await page.waitForSelector('.products', { timeout: 30000 });
+
+        const products = await page.evaluate(() => {
+          const items = document.querySelectorAll('.products li.product');
+          return Array.from(items, item => ({
+            name: item.querySelector('.woocommerce-loop-product__title')?.textContent?.trim() || 'Unknown',
+            price: item.querySelector('.price')?.textContent?.trim() || 'N/A'
+          })).slice(0, 4);
+        });
+
+        await page.close();
+        resolve(products);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  };
 
   try {
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1920, height: 1080 });
-
-    // Navigate to the Katalon demo site
-    await page.goto('https://cms.demo.katalon.com/', { waitUntil: 'networkidle0' });
-
-    // Click "Add to cart" for the first 4 items
-    for (let i = 1; i <= 4; i++) {
-      const addToCartSelector = `main#main > div:nth-child(2) > ul > li:nth-child(${i}) > div > a.button`;
-      await page.waitForSelector(addToCartSelector);
-      await page.click(addToCartSelector);
-    }
-
-    // Go to checkout page
-    await page.goto('https://cms.demo.katalon.com/checkout', { waitUntil: 'networkidle0' });
-
-    // Get all items from the order review table
-    const items = await page.evaluate(() => {
-      const rows = document.querySelectorAll('#order_review table tbody tr');
-      return Array.from(rows).map(row => ({
-        name: row.querySelector('td.product-name').textContent.trim(),
-        price: row.querySelector('td.product-total').textContent.trim()
-      }));
+    console.log("Launching browser...");
+    browser = await puppeteer.launch({
+      product: 'chrome',
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu'
+      ],
+      executablePath: process.env.NODE_ENV === "production"
+        ? '/usr/bin/google-chrome-stable'
+        : puppeteer.executablePath(),
     });
 
-    // Send response as JSON
+    const products = await loadPage();
+
+    console.log("Scraping completed successfully");
     res.json({
       success: true,
-      data: items,
+      data: products,
       timestamp: new Date().toISOString()
     });
 
   } catch (e) {
-    console.error(e);
+    console.error("Scraping failed with error:", e);
     res.json({
       success: false,
       error: e.message,
+      stack: process.env.NODE_ENV === 'development' ? e.stack : undefined,
       timestamp: new Date().toISOString()
     });
   } finally {
-    await browser.close();
+    if (browser) {
+      try {
+        await browser.close();
+        console.log("Browser closed successfully");
+      } catch (e) {
+        console.error("Error closing browser:", e);
+      }
+    }
   }
 };
 
