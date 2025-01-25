@@ -5,6 +5,7 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 app.get("/scrape", (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
   scrapeLogic(res);
 });
 
